@@ -10,6 +10,8 @@ pub fn derive(input: TokenStream) -> TokenStream {
     let builder_name = Ident::new(&format!("{}Builder", name), Span::call_site());
 
     let gen = quote! {
+            use std::error::{Error};
+
             pub struct #builder_name {
                 executable: Option<String>,
                 args: Option<Vec<String>>,
@@ -37,6 +39,20 @@ pub fn derive(input: TokenStream) -> TokenStream {
                     self.current_dir = Some(current_dir);
                     self
                 }
+
+                pub fn build(&mut self) -> Result<#name, Box<dyn Error>> {
+                    let executable = self.executable.clone().ok_or("executable is required")?;
+                    let args = self.args.clone().ok_or("args is required")?;
+                    let env = self.env.clone().ok_or("env is required")?;
+                    let current_dir = self.current_dir.clone().ok_or("current_dir is required")?;
+
+                    Ok(#name {
+                        executable,
+                        args,
+                        env,
+                        current_dir,
+                    })
+                }
             }
 
             impl #name {
@@ -48,6 +64,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
                         current_dir: None,
                     }
                 }
+
             }
         };
     gen.into()
