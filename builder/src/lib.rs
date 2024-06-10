@@ -135,7 +135,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
             let ident = field.ident.as_ref().unwrap();
             let each_fn_name = Ident::new(&opts.unwrap().each.unwrap(), Span::call_site());
             return quote! {
-                fn #each_fn_name(&mut self, #ident: String) -> &mut Self {
+                fn #each_fn_name(&mut self, #ident: std::string::String) -> &mut Self {
                     if let Some(ref mut vec) = self.#ident {
                         vec.push(#ident);
                     } else {
@@ -162,28 +162,30 @@ pub fn derive(input: TokenStream) -> TokenStream {
         }
     }).collect();
 
-    let gen = quote! {
-        use std::error::{Error};
+    let struct_fields: Vec<_> = fields.iter().into_iter().map(|field| {
+        let ident = &field.ident;
+        quote! {
+            #ident
+        }
+    }).collect();
 
+    let gen = quote! {
         pub struct #builder_name {
-            executable: Option<String>,
-            args: Option<Vec<String>>,
-            env: Option<Vec<String>>,
-            current_dir: Option<String>,
+            executable: std::option::Option<std::string::String>,
+            args: std::option::Option<std::vec::Vec<std::string::String>>,
+            env: std::option::Option<std::vec::Vec<std::string::String>>,
+            current_dir: std::option::Option<std::string::String>,
         }
 
         impl #builder_name {
 
             #(#each_functions)*
 
-            pub fn build(&mut self) -> Result<#name, Box<dyn Error>> {
+            pub fn build(&mut self) -> std::result::Result<#name, std::boxed::Box<dyn std::error::Error>> {
                 #(#builder_checks)*
 
                 Ok(#name {
-                    executable,
-                    args,
-                    env,
-                    current_dir,
+                    #(#struct_fields),*
                 })
             }
         }
