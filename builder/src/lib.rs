@@ -41,7 +41,54 @@ fn is_optional_type(ty: &syn::Type) -> bool {
     false
 }
 
-#[proc_macro_derive(Builder)]
+fn strip_optional_type(ty: &syn::Type) -> syn::Type {
+    if let syn::Type::Path(syn::TypePath { path, .. }) = ty {
+        if let Some(segment) = path.segments.last() {
+            if segment.ident == "Option" {
+                if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
+                    if let Some(arg) = args.args.first() {
+                        if let syn::GenericArgument::Type(ty) = arg {
+                            return ty.clone();
+                        }
+                    }
+                }
+            }
+        }
+    }
+    ty.clone()
+}
+
+struct BuilderAttributeOpts {
+    each: Option<String>,
+}
+
+impl syn::parse::Parse for BuilderAttributeOpts {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let mut opts = BuilderAttributeOpts {
+            each: None,
+        };
+        while !input.is_empty() {
+            let name: Ident = input.parse()?;
+            input.parse::<syn::Token![=]>()?;
+            match name.to_string().as_str() {
+                "each" => {
+                    let value: syn::LitStr = input.parse()?;
+                    opts.each = Some(value.value());
+                }
+                _ => {
+                    return Err(syn::Error::new(name.span(), "unknown option"));
+                }
+            }
+            if input.is_empty() {
+                break;
+            }
+            input.parse::<syn::Token![,]>()?;
+        }
+        Ok(opts)
+    }
+}
+
+#[proc_macro_derive(Builder, attributes(builder))]
 pub fn derive(input: TokenStream) -> TokenStream {
     let ast: DeriveInput = syn::parse(input).unwrap();
     let name = &ast.ident;
@@ -56,6 +103,43 @@ pub fn derive(input: TokenStream) -> TokenStream {
             unimplemented!();
         }
     };
+
+    // builder functions
+    let each_functions: Vec<_> = fields.iter().map(|field| {
+        // Get the builder attribute
+        let field_name = field.ident.as_ref().unwrap();
+        let field_ty = &field.ty;
+        let field_ty_inner = strip_optional_type(field_ty);
+
+        let builder_opts: Option<BuilderAttributeOpts> = field.attrs.iter().filter(|attr| {
+            attr.path().is_ident("builder")
+        }).map(|attr| {
+            attr.parse_args().unwrap()
+        }).next();
+
+        if builder_opts.is_none() || builder_opts.as_ref().unwrap().each.is_none() {
+            return quote! {
+                fn #field_name(&mut self, #field_name: #field_ty_inner) -> &mut Self {
+                    self.#field_name = Some(#field_name);
+                    self
+                }
+            };
+        } else {
+            let opts = builder_opts.unwrap();
+            let ident = field.ident.as_ref().unwrap();
+            let each_fn_name = Ident::new(&opts.each.unwrap(), Span::call_site());
+            return quote! {
+                fn #each_fn_name(&mut self, #ident: String) -> &mut Self {
+                    if let Some(ref mut vec) = self.#ident {
+                        vec.push(#ident);
+                    } else {
+                        self.#ident = Some(vec![#ident]);
+                    }
+                    self
+                }
+            };
+        }
+    }).collect();
 
     // builder value set checks
     let builder_checks: Vec<_> = fields.iter().map(|field| {
@@ -83,25 +167,8 @@ pub fn derive(input: TokenStream) -> TokenStream {
         }
 
         impl #builder_name {
-            fn executable(&mut self, executable: String) -> &mut Self {
-                self.executable = Some(executable);
-                self
-            }
 
-            fn args(&mut self, args: Vec<String>) -> &mut Self {
-                self.args = Some(args);
-                self
-            }
-
-            fn env(&mut self, env: Vec<String>) -> &mut Self {
-                self.env = Some(env);
-                self
-            }
-
-            fn current_dir(&mut self, current_dir: String) -> &mut Self {
-                self.current_dir = Some(current_dir);
-                self
-            }
+            #(#each_functions)*
 
             pub fn build(&mut self) -> Result<#name, Box<dyn Error>> {
                 #(#builder_checks)*
