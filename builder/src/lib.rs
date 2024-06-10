@@ -76,7 +76,7 @@ impl syn::parse::Parse for BuilderAttributeOpts {
                     opts.each = Some(value.value());
                 }
                 _ => {
-                    return Err(syn::Error::new(name.span(), "unknown option"));
+                    return Err(syn::Error::new(name.span(), "expected `builder(each = \"...\")`"));
                 }
             }
             if input.is_empty() {
@@ -111,13 +111,13 @@ pub fn derive(input: TokenStream) -> TokenStream {
         let field_ty = &field.ty;
         let field_ty_inner = strip_optional_type(field_ty);
 
-        let builder_opts: Option<BuilderAttributeOpts> = field.attrs.iter().filter(|attr| {
+        let builder_opts: Option<syn::Result<BuilderAttributeOpts>> = field.attrs.iter().filter(|attr| {
             attr.path().is_ident("builder")
         }).map(|attr| {
-            attr.parse_args().unwrap()
+            attr.parse_args()
         }).next();
 
-        if builder_opts.is_none() || builder_opts.as_ref().unwrap().each.is_none() {
+        if builder_opts.is_none() {
             return quote! {
                 fn #field_name(&mut self, #field_name: #field_ty_inner) -> &mut Self {
                     self.#field_name = Some(#field_name);
@@ -126,8 +126,14 @@ pub fn derive(input: TokenStream) -> TokenStream {
             };
         } else {
             let opts = builder_opts.unwrap();
+
+            if opts.is_err() {
+                let err = opts.err().unwrap();
+                return err.to_compile_error();
+            }
+
             let ident = field.ident.as_ref().unwrap();
-            let each_fn_name = Ident::new(&opts.each.unwrap(), Span::call_site());
+            let each_fn_name = Ident::new(&opts.unwrap().each.unwrap(), Span::call_site());
             return quote! {
                 fn #each_fn_name(&mut self, #ident: String) -> &mut Self {
                     if let Some(ref mut vec) = self.#ident {
